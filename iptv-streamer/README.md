@@ -30,6 +30,16 @@ chmod +x start.sh
 
 `php -S` handles **one request at a time**. While a channel is playing, Chrome/phone/another Wii will hang until that stream stops.
 
+### iPhone / iPad (iSH, single client)
+See **[IPHONE.md](IPHONE.md)**. Short version:
+
+```sh
+apk add python3 php ffmpeg git
+./start-iphone.sh
+```
+
+Expect lower quality / possible stutter; keep iSH in the foreground.
+
 Default listen address: `0.0.0.0:8081`.
 
 ### WSL2 note

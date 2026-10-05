@@ -353,6 +353,10 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         ffmpeg = os.environ.get("FFMPEG_BIN", "ffmpeg")
+        scale = os.environ.get("VIDEO_SCALE", "640:360")
+        preset = os.environ.get("FFMPEG_PRESET", "veryfast")
+        fps = os.environ.get("VIDEO_FPS", "30")
+        audio_br = os.environ.get("AUDIO_BITRATE", "128k")
         cmd = [
             ffmpeg,
             "-hide_banner",
@@ -368,19 +372,19 @@ class Handler(BaseHTTPRequestHandler):
             "-level",
             "3.0",
             "-preset",
-            "veryfast",
+            preset,
             "-tune",
             "zerolatency",
             "-pix_fmt",
             "yuv420p",
             "-vf",
-            "scale=640:360",
+            f"scale={scale}",
             "-r",
-            "30",
+            fps,
             "-c:a",
             "aac",
             "-b:a",
-            "128k",
+            audio_br,
             "-ac",
             "2",
             "-ar",

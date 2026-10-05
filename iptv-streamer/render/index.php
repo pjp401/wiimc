@@ -28,16 +28,24 @@ if (preg_match('#^(file|ftp|rtmp|udp|rtsp):#i', $video_url)) {
 }
 
 $ffmpeg = getenv('FFMPEG_BIN') ?: 'ffmpeg';
+$scale = getenv('VIDEO_SCALE') ?: '640:360';
+$preset = getenv('FFMPEG_PRESET') ?: 'veryfast';
+$fps = getenv('VIDEO_FPS') ?: '30';
+$audioBr = getenv('AUDIO_BITRATE') ?: '128k';
 
 // Wii-friendly progressive MPEG-TS (same approach as the working .ts catalog).
 $cmd = sprintf(
     '%s -hide_banner -loglevel error -re -i %s ' .
-    '-c:v libx264 -profile:v baseline -level 3.0 -preset veryfast -tune zerolatency ' .
-    '-pix_fmt yuv420p -vf scale=640:360 -r 30 ' .
-    '-c:a aac -b:a 128k -ac 2 -ar 48000 ' .
+    '-c:v libx264 -profile:v baseline -level 3.0 -preset %s -tune zerolatency ' .
+    '-pix_fmt yuv420p -vf scale=%s -r %s ' .
+    '-c:a aac -b:a %s -ac 2 -ar 48000 ' .
     '-f mpegts -',
     escapeshellcmd($ffmpeg),
-    escapeshellarg($video_url)
+    escapeshellarg($video_url),
+    escapeshellarg($preset),
+    escapeshellarg($scale),
+    escapeshellarg($fps),
+    escapeshellarg($audioBr)
 );
 
 $descriptors = [
