@@ -6,18 +6,29 @@ Derived from [Komfudo/WiiMC-IPTV-Streamer-and-Renderer](https://github.com/Komfu
 
 ## Requirements
 
-- PHP CLI (`php-cli`)
+- PHP CLI (`php-cli`) — used to read `config.php`
+- Python 3 — concurrent server
 - ffmpeg
 - Same Wi‑Fi/LAN as the Wii
 
 ## Quick start (Linux / WSL)
 
+### Concurrent mode (recommended — multiple Wiis / Chrome / phone)
 ```bash
 cd iptv-streamer
-# edit config.php with your stream URLs
+chmod +x start-concurrent.sh
+./start-concurrent.sh
+```
+
+One playing stream will **not** block other requests.
+
+### Single-thread mode (legacy)
+```bash
 chmod +x start.sh
 ./start.sh
 ```
+
+`php -S` handles **one request at a time**. While a channel is playing, Chrome/phone/another Wii will hang until that stream stops.
 
 Default listen address: `0.0.0.0:8081`.
 
