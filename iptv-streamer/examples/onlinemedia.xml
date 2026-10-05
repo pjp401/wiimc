@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Copy relevant entries into SD:/apps/wiimc/onlinemedia.xml (or merge).
+  Replace 10.0.0.83 with your PC LAN IP if different.
+-->
+<onlinemedia>
+  <folder name="IPTV">
+    <link name="IPTV Catalog"
+          addr="http://10.0.0.83:8081/"
+          type="playlist" />
+  </folder>
+</onlinemedia>
