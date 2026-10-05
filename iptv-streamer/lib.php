@@ -2,24 +2,38 @@
 /**
  * Load channels from config + optional remote #EXTM3U catalog.
  */
-function iptv_http_get(string $url, int $timeout = 8): ?string
+
+function iptv_cache_path(): string
 {
+    return sys_get_temp_dir() . '/wiimc-iptv-channels.json';
+}
+
+function iptv_http_get(string $url, int $timeout = 60): array
+{
+    $error = null;
+    $body = null;
+    $code = 0;
+
     if (function_exists('curl_init')) {
         $ch = curl_init($url);
         curl_setopt_array($ch, [
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_FOLLOWLOCATION => true,
-            CURLOPT_CONNECTTIMEOUT => $timeout,
+            CURLOPT_CONNECTTIMEOUT => min(15, $timeout),
             CURLOPT_TIMEOUT => $timeout,
             CURLOPT_USERAGENT => 'WiiMC-IPTV-Streamer/1.0',
         ]);
         $body = curl_exec($ch);
         $code = (int)curl_getinfo($ch, CURLINFO_HTTP_CODE);
-        curl_close($ch);
-        if ($body !== false && $code >= 200 && $code < 400) {
-            return $body;
+        if ($body === false) {
+            $error = curl_error($ch) ?: 'curl failed';
+            $body = null;
+        } elseif ($code < 200 || $code >= 400) {
+            $error = "HTTP $code";
+            $body = null;
         }
-        return null;
+        curl_close($ch);
+        return ['body' => $body, 'error' => $error, 'code' => $code];
     }
 
     $ctx = stream_context_create([
@@ -30,7 +44,10 @@ function iptv_http_get(string $url, int $timeout = 8): ?string
         ],
     ]);
     $body = @file_get_contents($url, false, $ctx);
-    return ($body === false) ? null : $body;
+    if ($body === false) {
+        return ['body' => null, 'error' => 'file_get_contents failed', 'code' => 0];
+    }
+    return ['body' => $body, 'error' => null, 'code' => 200];
 }
 
 function iptv_resolve_url(string $maybeRelative, string $basePlaylistUrl): string
@@ -55,8 +72,6 @@ function iptv_resolve_url(string $maybeRelative, string $basePlaylistUrl): strin
     }
 
     $path = $parts['path'] ?? '/';
-    // If playlist path looks like a file (/iptv/list.m3u), resolve beside it;
-    // if it's a bare route (/iptv), treat that directory as the base.
     if (str_ends_with($path, '/')) {
         $dir = rtrim($origin . $path, '/');
     } elseif (preg_match('#\.(m3u8?|pls)$#i', $path)) {
@@ -71,15 +86,13 @@ function iptv_resolve_url(string $maybeRelative, string $basePlaylistUrl): strin
     return rtrim($dir, '/') . '/' . ltrim($maybeRelative, '/');
 }
 
-/**
- * Parse a standard M3U / HLS media playlist into title/url pairs.
- * Skips #EXT-X-* control lines; uses #EXTINF titles when present.
- */
-function iptv_parse_m3u(string $body, string $playlistUrl): array
+function iptv_parse_m3u(string $body, string $playlistUrl, string $groupFilter = ''): array
 {
     $channels = [];
     $pendingTitle = 'Channel';
+    $pendingGroup = '';
     $lines = preg_split("/\r\n|\n|\r/", $body);
+    $filter = trim($groupFilter);
 
     foreach ($lines as $line) {
         $line = trim($line);
@@ -89,18 +102,27 @@ function iptv_parse_m3u(string $body, string $playlistUrl): array
 
         if (str_starts_with($line, '#EXTINF:')) {
             $title = 'Channel';
+            $pendingGroup = '';
             if (preg_match('/,(.*)$/', $line, $m)) {
                 $title = trim($m[1]);
             }
-            // Prefer tvg-name="..." if present
             if (preg_match('/tvg-name="([^"]+)"/i', $line, $m)) {
                 $title = trim($m[1]);
+            }
+            if (preg_match('/group-title="([^"]+)"/i', $line, $m)) {
+                $pendingGroup = trim($m[1]);
             }
             $pendingTitle = ($title !== '') ? $title : 'Channel';
             continue;
         }
 
         if (str_starts_with($line, '#')) {
+            continue;
+        }
+
+        if ($filter !== '' && stripos($pendingGroup, $filter) === false) {
+            $pendingTitle = 'Channel';
+            $pendingGroup = '';
             continue;
         }
 
@@ -112,8 +134,10 @@ function iptv_parse_m3u(string $body, string $playlistUrl): array
         $channels[] = [
             'title' => $pendingTitle,
             'url' => $url,
+            'group' => $pendingGroup,
         ];
         $pendingTitle = 'Channel';
+        $pendingGroup = '';
     }
 
     return $channels;
@@ -121,32 +145,72 @@ function iptv_parse_m3u(string $body, string $playlistUrl): array
 
 function iptv_load_channels(array $config): array
 {
-    $channels = [];
+    $result = [
+        'channels' => [],
+        'error' => null,
+        'from_cache' => false,
+    ];
+
+    $timeout = (int)($config['playlist_timeout'] ?? 60);
+    $ttl = (int)($config['cache_ttl'] ?? 300);
+    $max = (int)($config['max_channels'] ?? 0);
+    $groupFilter = (string)($config['group_filter'] ?? '');
+    $cacheFile = iptv_cache_path();
 
     if (!empty($config['source_playlist']) && is_string($config['source_playlist'])) {
         $playlistUrl = $config['source_playlist'];
-        $body = iptv_http_get($playlistUrl);
-        if ($body !== null && stripos($body, '#EXTM3U') !== false) {
-            $channels = array_merge($channels, iptv_parse_m3u($body, $playlistUrl));
+
+        if ($ttl > 0 && is_file($cacheFile) && (time() - filemtime($cacheFile)) < $ttl) {
+            $cached = json_decode((string)file_get_contents($cacheFile), true);
+            if (is_array($cached) && !empty($cached['channels'])) {
+                $result['channels'] = $cached['channels'];
+                $result['from_cache'] = true;
+            }
+        }
+
+        if ($result['channels'] === []) {
+            $fetch = iptv_http_get($playlistUrl, max(5, $timeout));
+            if ($fetch['body'] === null) {
+                $result['error'] = 'Fetch failed: ' . ($fetch['error'] ?? 'unknown');
+            } elseif (stripos($fetch['body'], '#EXTM3U') === false) {
+                $result['error'] = 'Source did not look like #EXTM3U';
+            } else {
+                $result['channels'] = iptv_parse_m3u($fetch['body'], $playlistUrl, $groupFilter);
+                if ($result['channels'] === []) {
+                    $result['error'] = 'Parsed 0 channels from source playlist';
+                } elseif ($ttl > 0) {
+                    @file_put_contents($cacheFile, json_encode([
+                        'fetched_at' => time(),
+                        'source' => $playlistUrl,
+                        'channels' => $result['channels'],
+                    ]));
+                }
+            }
+        } elseif ($groupFilter !== '') {
+            // Re-apply filter on cached full list if present without groups... keep as-is.
         }
     }
 
     if (!empty($config['channels']) && is_array($config['channels'])) {
         foreach ($config['channels'] as $ch) {
             if (!empty($ch['title']) && !empty($ch['url'])) {
-                $channels[] = $ch;
+                $result['channels'][] = $ch;
             }
         }
     }
 
-    // Backward compatible: plain list of channels only
-    if ($channels === [] && array_is_list($config)) {
+    // Backward compatible plain list
+    if ($result['channels'] === [] && array_is_list($config)) {
         foreach ($config as $ch) {
             if (is_array($ch) && !empty($ch['title']) && !empty($ch['url'])) {
-                $channels[] = $ch;
+                $result['channels'][] = $ch;
             }
         }
     }
 
-    return $channels;
+    if ($max > 0 && count($result['channels']) > $max) {
+        $result['channels'] = array_slice($result['channels'], 0, $max);
+    }
+
+    return $result;
 }

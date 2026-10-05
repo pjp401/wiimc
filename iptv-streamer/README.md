@@ -41,13 +41,22 @@ If your HLS service publishes a root `#EXTM3U` catalog (e.g. `http://10.75.39.12
 ```php
 return [
     'source_playlist' => 'http://10.75.39.12:9999/iptv',
+    'playlist_timeout' => 60,
+    'cache_ttl' => 300,
+    'max_channels' => 100,      // keep small for WiiMC
+    'group_filter' => '',       // e.g. 'something' to match group-title
     'channels' => [],
 ];
 ```
 
-The streamer fetches that file, reads each `#EXTINF` + URL pair, and exposes them to WiiMC through `/render/` (live MPEG-TS transcode).
+The streamer fetches that file, caches it, and exposes entries through `/render/`.
 
-You can also add manual entries under `channels`.
+Debug:
+```bash
+curl -s http://10.0.0.83:8081/status.php
+```
+
+If WiiMC shows an error title, the playlist fetch failed — check `status.php`.
 
 ## WiiMC-SS
 

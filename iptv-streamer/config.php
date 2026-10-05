@@ -1,21 +1,24 @@
 <?php
 /**
  * IPTV streamer config for WiiMC-SS.
- *
- * source_playlist: remote #EXTM3U catalog (your HLS service root).
- * Each entry is wrapped through /render/ so WiiMC gets MPEG-TS.
- *
- * channels: optional extra/manual entries merged after the playlist.
  */
 return [
     // Main HLS catalog from your LAN service
     'source_playlist' => 'http://10.75.39.12:9999/iptv',
 
-    // Optional hard-coded extras (leave empty if the playlist has everything)
-    'channels' => [
-        // [
-        //     'title' => 'Manual Channel',
-        //     'url' => 'http://10.75.39.12:9999/iptv/SOME%20CHANNEL',
-        // ],
-    ],
+    // Fetch/parse can be slow for huge catalogs
+    'playlist_timeout' => 60,
+
+    // Cache imported channels on disk (seconds). 0 = disable.
+    'cache_ttl' => 300,
+
+    // WiiMC struggles with 10k+ entries. Start small; raise later.
+    'max_channels' => 100,
+
+    // Optional: only keep entries whose group-title contains this text (case-insensitive).
+    // Example: 'FOR ADULTS' or 'something'
+    'group_filter' => '',
+
+    // Optional hard-coded extras
+    'channels' => [],
 ];
