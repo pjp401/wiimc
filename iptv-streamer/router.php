@@ -10,6 +10,11 @@ if ($uri === '/' || $uri === '/index.php') {
     return true;
 }
 
+if ($uri === '/group' || $uri === '/group.php') {
+    require __DIR__ . '/group.php';
+    return true;
+}
+
 if ($uri === '/status' || $uri === '/status.php') {
     require __DIR__ . '/status.php';
     return true;

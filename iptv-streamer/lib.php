@@ -86,13 +86,12 @@ function iptv_resolve_url(string $maybeRelative, string $basePlaylistUrl): strin
     return rtrim($dir, '/') . '/' . ltrim($maybeRelative, '/');
 }
 
-function iptv_parse_m3u(string $body, string $playlistUrl, string $groupFilter = ''): array
+function iptv_parse_m3u(string $body, string $playlistUrl): array
 {
     $channels = [];
     $pendingTitle = 'Channel';
     $pendingGroup = '';
     $lines = preg_split("/\r\n|\n|\r/", $body);
-    $filter = trim($groupFilter);
 
     foreach ($lines as $line) {
         $line = trim($line);
@@ -120,12 +119,6 @@ function iptv_parse_m3u(string $body, string $playlistUrl, string $groupFilter =
             continue;
         }
 
-        if ($filter !== '' && stripos($pendingGroup, $filter) === false) {
-            $pendingTitle = 'Channel';
-            $pendingGroup = '';
-            continue;
-        }
-
         $url = iptv_resolve_url($line, $playlistUrl);
         if (!preg_match('#^https?://#i', $url)) {
             continue;
@@ -134,7 +127,7 @@ function iptv_parse_m3u(string $body, string $playlistUrl, string $groupFilter =
         $channels[] = [
             'title' => $pendingTitle,
             'url' => $url,
-            'group' => $pendingGroup,
+            'group' => ($pendingGroup !== '') ? $pendingGroup : 'Ungrouped',
         ];
         $pendingTitle = 'Channel';
         $pendingGroup = '';
@@ -143,7 +136,7 @@ function iptv_parse_m3u(string $body, string $playlistUrl, string $groupFilter =
     return $channels;
 }
 
-function iptv_load_channels(array $config): array
+function iptv_load_all_channels(array $config): array
 {
     $result = [
         'channels' => [],
@@ -153,83 +146,165 @@ function iptv_load_channels(array $config): array
 
     $timeout = (int)($config['playlist_timeout'] ?? 60);
     $ttl = (int)($config['cache_ttl'] ?? 300);
-    $max = (int)($config['max_channels'] ?? 0);
-    $groupFilter = (string)($config['group_filter'] ?? '');
     $cacheFile = iptv_cache_path();
 
-    if (!empty($config['source_playlist']) && is_string($config['source_playlist'])) {
-        $playlistUrl = $config['source_playlist'];
-        $all = [];
-
-        if ($ttl > 0 && is_file($cacheFile) && (time() - filemtime($cacheFile)) < $ttl) {
-            $cached = json_decode((string)file_get_contents($cacheFile), true);
-            if (is_array($cached)
-                && ($cached['source'] ?? '') === $playlistUrl
-                && !empty($cached['channels'])
-                && is_array($cached['channels'])) {
-                $all = $cached['channels'];
-                $result['from_cache'] = true;
+    if (empty($config['source_playlist']) || !is_string($config['source_playlist'])) {
+        // Manual-only mode
+        if (!empty($config['channels']) && is_array($config['channels'])) {
+            foreach ($config['channels'] as $ch) {
+                if (!empty($ch['title']) && !empty($ch['url'])) {
+                    if (empty($ch['group'])) {
+                        $ch['group'] = 'Ungrouped';
+                    }
+                    $result['channels'][] = $ch;
+                }
             }
         }
+        return $result;
+    }
 
+    $playlistUrl = $config['source_playlist'];
+    $all = [];
+
+    if ($ttl > 0 && is_file($cacheFile) && (time() - filemtime($cacheFile)) < $ttl) {
+        $cached = json_decode((string)file_get_contents($cacheFile), true);
+        if (is_array($cached)
+            && ($cached['source'] ?? '') === $playlistUrl
+            && !empty($cached['channels'])
+            && is_array($cached['channels'])) {
+            $all = $cached['channels'];
+            $result['from_cache'] = true;
+        }
+    }
+
+    if ($all === []) {
+        $fetch = iptv_http_get($playlistUrl, max(5, $timeout));
+        if ($fetch['body'] === null) {
+            $result['error'] = 'Fetch failed: ' . ($fetch['error'] ?? 'unknown');
+            return $result;
+        }
+        if (stripos($fetch['body'], '#EXTM3U') === false) {
+            $result['error'] = 'Source did not look like #EXTM3U';
+            return $result;
+        }
+
+        $all = iptv_parse_m3u($fetch['body'], $playlistUrl);
         if ($all === []) {
-            $fetch = iptv_http_get($playlistUrl, max(5, $timeout));
-            if ($fetch['body'] === null) {
-                $result['error'] = 'Fetch failed: ' . ($fetch['error'] ?? 'unknown');
-            } elseif (stripos($fetch['body'], '#EXTM3U') === false) {
-                $result['error'] = 'Source did not look like #EXTM3U';
-            } else {
-                // Cache the full unfiltered list; filter is applied below.
-                $all = iptv_parse_m3u($fetch['body'], $playlistUrl, '');
-                if ($all === []) {
-                    $result['error'] = 'Parsed 0 channels from source playlist';
-                } elseif ($ttl > 0) {
-                    @file_put_contents($cacheFile, json_encode([
-                        'fetched_at' => time(),
-                        'source' => $playlistUrl,
-                        'channels' => $all,
-                    ]));
-                }
-            }
+            $result['error'] = 'Parsed 0 channels from source playlist';
+            return $result;
         }
-
-        if ($groupFilter !== '') {
-            $filtered = [];
-            foreach ($all as $ch) {
-                $group = (string)($ch['group'] ?? '');
-                if (stripos($group, $groupFilter) !== false) {
-                    $filtered[] = $ch;
-                }
-            }
-            $result['channels'] = $filtered;
-            if ($filtered === [] && $result['error'] === null) {
-                $result['error'] = 'No channels matched group_filter';
-            }
-        } else {
-            $result['channels'] = $all;
+        if ($ttl > 0) {
+            @file_put_contents($cacheFile, json_encode([
+                'fetched_at' => time(),
+                'source' => $playlistUrl,
+                'channels' => $all,
+            ]));
         }
     }
 
     if (!empty($config['channels']) && is_array($config['channels'])) {
         foreach ($config['channels'] as $ch) {
             if (!empty($ch['title']) && !empty($ch['url'])) {
-                $result['channels'][] = $ch;
+                if (empty($ch['group'])) {
+                    $ch['group'] = 'Ungrouped';
+                }
+                $all[] = $ch;
             }
         }
     }
 
-    // Backward compatible plain list
-    if ($result['channels'] === [] && array_is_list($config)) {
-        foreach ($config as $ch) {
-            if (is_array($ch) && !empty($ch['title']) && !empty($ch['url'])) {
-                $result['channels'][] = $ch;
-            }
-        }
-    }
-
-    if ($max > 0 && count($result['channels']) > $max) {
-        $result['channels'] = array_slice($result['channels'], 0, $max);
-    }
-
+    $result['channels'] = $all;
     return $result;
+}
+
+function iptv_group_map(array $channels): array
+{
+    $groups = [];
+    foreach ($channels as $ch) {
+        $group = trim((string)($ch['group'] ?? 'Ungrouped'));
+        if ($group === '') {
+            $group = 'Ungrouped';
+        }
+        if (!isset($groups[$group])) {
+            $groups[$group] = [];
+        }
+        $groups[$group][] = $ch;
+    }
+    ksort($groups, SORT_NATURAL | SORT_FLAG_CASE);
+    return $groups;
+}
+
+function iptv_filter_groups(array $groups, string $groupFilter): array
+{
+    $filter = trim($groupFilter);
+    if ($filter === '') {
+        return $groups;
+    }
+
+    $out = [];
+    foreach ($groups as $name => $channels) {
+        if (stripos($name, $filter) !== false) {
+            $out[$name] = $channels;
+        }
+    }
+    return $out;
+}
+
+function iptv_channels_in_group(array $channels, string $groupName): array
+{
+    $want = trim($groupName);
+    $out = [];
+    foreach ($channels as $ch) {
+        $group = trim((string)($ch['group'] ?? 'Ungrouped'));
+        if ($group === '') {
+            $group = 'Ungrouped';
+        }
+        if (strcasecmp($group, $want) === 0) {
+            $out[] = $ch;
+        }
+    }
+    return $out;
+}
+
+function iptv_emit_pls(array $entries): void
+{
+    header('Content-Type: text/plain; charset=UTF-8');
+    echo "[playlist]\n";
+    echo 'NumberOfEntries=' . count($entries) . "\n";
+
+    $i = 1;
+    foreach ($entries as $entry) {
+        echo 'File' . $i . '=' . $entry['file'] . "\n";
+        echo 'Title' . $i . '=' . str_replace(["\r", "\n", '='], ' ', $entry['title']) . "\n";
+        echo 'Length' . $i . '=' . ($entry['length'] ?? 9999999) . "\n";
+        $i++;
+    }
+}
+
+/** @deprecated kept for older status helpers */
+function iptv_load_channels(array $config): array
+{
+    $loaded = iptv_load_all_channels($config);
+    $groupFilter = (string)($config['group_filter'] ?? '');
+    $max = (int)($config['max_channels'] ?? 0);
+
+    if ($groupFilter !== '') {
+        $filtered = [];
+        foreach ($loaded['channels'] as $ch) {
+            $group = (string)($ch['group'] ?? '');
+            if (stripos($group, $groupFilter) !== false) {
+                $filtered[] = $ch;
+            }
+        }
+        $loaded['channels'] = $filtered;
+        if ($filtered === [] && $loaded['error'] === null) {
+            $loaded['error'] = 'No channels matched group_filter';
+        }
+    }
+
+    if ($max > 0 && count($loaded['channels']) > $max) {
+        $loaded['channels'] = array_slice($loaded['channels'], 0, $max);
+    }
+
+    return $loaded;
 }

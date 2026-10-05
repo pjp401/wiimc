@@ -1,35 +1,48 @@
 <?php
 /**
- * PLS playlist for WiiMC / WiiMC-SS Online Media.
+ * Top-level PLS: one entry per group-title (acts like folders in WiiMC).
+ * Opening an entry loads /group.php?name=... which lists that group's channels.
  */
 require __DIR__ . '/lib.php';
-
-header('Content-Type: text/plain; charset=UTF-8');
 
 $host = $_SERVER['HTTP_HOST'] ?? '127.0.0.1:8081';
 $base = 'http://' . $host;
 $config = require __DIR__ . '/config.php';
-$loaded = iptv_load_channels($config);
-$channels = $loaded['channels'];
+$loaded = iptv_load_all_channels($config);
 
-echo "[playlist]\n";
-echo 'NumberOfEntries=' . count($channels) . "\n";
-
-if ($channels === []) {
+if ($loaded['channels'] === []) {
     $msg = $loaded['error'] ? $loaded['error'] : 'No channels found';
-    // Keep it short for the Wii UI
     $msg = substr(str_replace(["\r", "\n", '='], ' ', $msg), 0, 80);
-    echo "File1=" . $base . "/status.php\n";
-    echo "Title1=" . $msg . "\n";
-    echo "Length1=0\n";
+    iptv_emit_pls([[
+        'file' => $base . '/status.php',
+        'title' => $msg,
+        'length' => 0,
+    ]]);
     exit;
 }
 
-$i = 1;
-foreach ($channels as $channel) {
-    $render = $base . '/render/?site=iptv&q=' . rawurlencode($channel['url']);
-    echo 'File' . $i . '=' . $render . "\n";
-    echo 'Title' . $i . '=' . str_replace(["\r", "\n", '='], ' ', $channel['title']) . "\n";
-    echo 'Length' . $i . "=9999999\n";
-    $i++;
+$groups = iptv_filter_groups(
+    iptv_group_map($loaded['channels']),
+    (string)($config['group_filter'] ?? '')
+);
+
+if ($groups === []) {
+    iptv_emit_pls([[
+        'file' => $base . '/status.php',
+        'title' => 'No groups matched group_filter',
+        'length' => 0,
+    ]]);
+    exit;
 }
+
+$entries = [];
+foreach ($groups as $name => $channels) {
+    $count = count($channels);
+    $entries[] = [
+        'file' => $base . '/group.php?name=' . rawurlencode($name),
+        'title' => $name . ' (' . $count . ')',
+        'length' => 9999999,
+    ];
+}
+
+iptv_emit_pls($entries);

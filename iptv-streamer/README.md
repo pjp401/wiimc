@@ -43,20 +43,23 @@ return [
     'source_playlist' => 'http://10.75.39.12:9999/iptv',
     'playlist_timeout' => 60,
     'cache_ttl' => 300,
-    'max_channels' => 100,      // keep small for WiiMC
-    'group_filter' => '',       // e.g. 'something' to match group-title
+    'max_channels' => 500,     // per group
+    'group_filter' => '',      // optional: only list matching group names
     'channels' => [],
 ];
 ```
 
-The streamer fetches that file, caches it, and exposes entries through `/render/`.
+Behavior:
+1. `/` lists each `group-title` as a playlist entry (folder-like in WiiMC)
+2. `/group.php?name=ENGLISH%20%7C%20USA%20LOCAL` lists up to `max_channels` streams in that group
+3. each stream goes through `/render/` for live MPEG-TS transcode
 
 Debug:
 ```bash
 curl -s http://10.0.0.83:8081/status.php
+curl -s http://10.0.0.83:8081/ | head
+curl -s "http://10.0.0.83:8081/group.php?name=ENGLISH%20%7C%20USA%20LOCAL" | head
 ```
-
-If WiiMC shows an error title, the playlist fetch failed — check `status.php`.
 
 ## WiiMC-SS
 
