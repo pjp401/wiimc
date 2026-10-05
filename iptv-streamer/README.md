@@ -36,18 +36,18 @@ New-NetFirewallRule -DisplayName "WiiMC IPTV 8081" -Direction Inbound -Protocol 
 
 ## Configure channels
 
-Edit `config.php`:
+If your HLS service publishes a root `#EXTM3U` catalog (e.g. `http://10.75.39.12:9999/iptv`), set that in `config.php`:
 
 ```php
 return [
-    [
-        'title' => 'Test Channel',
-        'url' => 'http://10.75.39.12:9999/iptv/TEST%20CHANNEL',
-    ],
+    'source_playlist' => 'http://10.75.39.12:9999/iptv',
+    'channels' => [],
 ];
 ```
 
-Use streams you are allowed to access. HLS (`.m3u8` / `application/vnd.apple.mpegurl`) is the main target.
+The streamer fetches that file, reads each `#EXTINF` + URL pair, and exposes them to WiiMC through `/render/` (live MPEG-TS transcode).
+
+You can also add manual entries under `channels`.
 
 ## WiiMC-SS
 
