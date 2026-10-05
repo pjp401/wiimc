@@ -10,14 +10,14 @@ return [
     'playlist_timeout' => 60,
 
     // Cache imported channels on disk (seconds). 0 = disable.
+    // Clear cache after changing group_filter (delete the cache file or set 0 once).
     'cache_ttl' => 300,
 
-    // WiiMC struggles with 10k+ entries. Start small; raise later.
-    'max_channels' => 100,
+    // 0 = no cap (safe after a tight group_filter)
+    'max_channels' => 0,
 
-    // Optional: only keep entries whose group-title contains this text (case-insensitive).
-    // Example: 'FOR ADULTS' or 'something'
-    'group_filter' => '',
+    // Only keep entries whose group-title contains this text (case-insensitive).
+    'group_filter' => 'ENGLISH | USA LOCAL',
 
     // Optional hard-coded extras
     'channels' => [],

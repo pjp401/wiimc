@@ -159,35 +159,54 @@ function iptv_load_channels(array $config): array
 
     if (!empty($config['source_playlist']) && is_string($config['source_playlist'])) {
         $playlistUrl = $config['source_playlist'];
+        $all = [];
 
         if ($ttl > 0 && is_file($cacheFile) && (time() - filemtime($cacheFile)) < $ttl) {
             $cached = json_decode((string)file_get_contents($cacheFile), true);
-            if (is_array($cached) && !empty($cached['channels'])) {
-                $result['channels'] = $cached['channels'];
+            if (is_array($cached)
+                && ($cached['source'] ?? '') === $playlistUrl
+                && !empty($cached['channels'])
+                && is_array($cached['channels'])) {
+                $all = $cached['channels'];
                 $result['from_cache'] = true;
             }
         }
 
-        if ($result['channels'] === []) {
+        if ($all === []) {
             $fetch = iptv_http_get($playlistUrl, max(5, $timeout));
             if ($fetch['body'] === null) {
                 $result['error'] = 'Fetch failed: ' . ($fetch['error'] ?? 'unknown');
             } elseif (stripos($fetch['body'], '#EXTM3U') === false) {
                 $result['error'] = 'Source did not look like #EXTM3U';
             } else {
-                $result['channels'] = iptv_parse_m3u($fetch['body'], $playlistUrl, $groupFilter);
-                if ($result['channels'] === []) {
+                // Cache the full unfiltered list; filter is applied below.
+                $all = iptv_parse_m3u($fetch['body'], $playlistUrl, '');
+                if ($all === []) {
                     $result['error'] = 'Parsed 0 channels from source playlist';
                 } elseif ($ttl > 0) {
                     @file_put_contents($cacheFile, json_encode([
                         'fetched_at' => time(),
                         'source' => $playlistUrl,
-                        'channels' => $result['channels'],
+                        'channels' => $all,
                     ]));
                 }
             }
-        } elseif ($groupFilter !== '') {
-            // Re-apply filter on cached full list if present without groups... keep as-is.
+        }
+
+        if ($groupFilter !== '') {
+            $filtered = [];
+            foreach ($all as $ch) {
+                $group = (string)($ch['group'] ?? '');
+                if (stripos($group, $groupFilter) !== false) {
+                    $filtered[] = $ch;
+                }
+            }
+            $result['channels'] = $filtered;
+            if ($filtered === [] && $result['error'] === null) {
+                $result['error'] = 'No channels matched group_filter';
+            }
+        } else {
+            $result['channels'] = $all;
         }
     }
 
